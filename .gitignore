@@ -1,0 +1,35 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+apps/web/.env
+apps/web/.env.local
+apps/api/.env
+
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+.venv/
+env/
+venv/
+
+# Uploads & Temp files
+uploads/
+temp/
+*.mp4
+*.webm
+*.mov
+!apps/web/public/*.svg
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

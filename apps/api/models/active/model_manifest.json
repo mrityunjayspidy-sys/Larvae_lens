@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "required": {
+    "detector": {
+      "filename": "larva_detector_e050_best.pt",
+      "sha256": "b78d96ac8b0dd5146b56b1034d36efc9ce04bff52bc0db9b7113f92818483768",
+      "classes": ["mosquito_larva", "larva"],
+      "input_size": 640
+    }
+  },
+  "fusion": {
+    "detector_threshold": 0.25,
+    "min_track_frames": 4,
+    "motion_threshold": 0.015,
+    "high_morphology_threshold": 0.88
+  }
+}

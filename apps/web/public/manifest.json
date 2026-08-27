@@ -1,0 +1,16 @@
+{
+  "short_name": "LarvaLens",
+  "name": "LarvaLens Surveillance PWA",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": "/",
+  "background_color": "#F5F8FC",
+  "theme_color": "#102A43",
+  "display": "standalone",
+  "orientation": "portrait"
+}

@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LarvaLensModelManifest",
+  "type": "object",
+  "required": ["schema_version", "required", "fusion"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [1]
+    },
+    "required": {
+      "type": "object",
+      "required": ["detector", "verifier"],
+      "properties": {
+        "detector": {
+          "type": "object",
+          "required": ["filename", "sha256", "classes", "input_size"],
+          "properties": {
+            "filename": { "type": "string" },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "classes": { "type": "array", "items": { "type": "string" } },
+            "input_size": { "type": "integer" }
+          }
+        },
+        "verifier": {
+          "type": "object",
+          "required": ["filename", "sha256", "classes", "input_size", "larva_threshold"],
+          "properties": {
+            "filename": { "type": "string" },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "classes": { "type": "array", "items": { "type": "string" } },
+            "input_size": { "type": "integer" },
+            "larva_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+          }
+        },
+        "species": {
+          "type": "object",
+          "properties": {
+            "filename": { "type": "string" },
+            "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+            "classes": { "type": "array", "items": { "type": "string" } },
+            "input_size": { "type": "integer" }
+          }
+        }
+      }
+    },
+    "fusion": {
+      "type": "object",
+      "required": ["detector_threshold", "min_track_frames", "motion_threshold", "high_morphology_threshold"],
+      "properties": {
+        "detector_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "min_track_frames": { "type": "integer", "minimum": 1 },
+        "motion_threshold": { "type": "number", "minimum": 0.0 },
+        "high_morphology_threshold": { "type": "number", "minimum": 0.0, "maximum": 1.0 }
+      }
+    }
+  }
+}
