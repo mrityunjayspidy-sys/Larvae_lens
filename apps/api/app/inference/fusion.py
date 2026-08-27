@@ -21,25 +21,24 @@ class FusionEngine:
         persistence_frames: int
     ) -> Tuple[bool, Optional[str], float]:
         """
-        Gating logic for individual object tracks.
+        Gating logic for individual object tracks using positive larva detector.
         Returns (accepted: bool, reject_reason: Optional[str], fused_confidence: float)
         """
         # Calculate fused confidence
-        # 40% detector + 40% verifier + 20% normalized motion
         motion_norm = min(1.0, motion_score * 25.0)
         fused_conf = round(0.40 * detector_conf + 0.40 * larva_prob + 0.20 * motion_norm, 4)
 
-        det_th = self.thresholds["detector_threshold"]
-        larva_th = self.thresholds["larva_threshold"]
-        min_frames = self.thresholds["min_track_frames"]
-        motion_th = self.thresholds["motion_threshold"]
-        high_morph_th = self.thresholds["high_morphology_threshold"]
+        det_th = self.thresholds.get("detector_threshold", 0.25)
+        larva_th = self.thresholds.get("larva_threshold", 0.70)
+        min_frames = self.thresholds.get("min_track_frames", 4)
+        motion_th = self.thresholds.get("motion_threshold", 0.015)
+        high_morph_th = self.thresholds.get("high_morphology_threshold", 0.88)
 
-        # 1. Detector check
+        # 1. Detector check (Positive larva candidate)
         if detector_conf < det_th:
             return False, "DETECTOR_LOW_CONFIDENCE", fused_conf
 
-        # 2. Verifier morphology check (Reject leaves, twigs, bubbles, dust)
+        # 2. Morphology verification check (Reject leaves, twigs, bubbles, dust lookalikes)
         if larva_prob < larva_th:
             return False, "FAILED_VERIFIER_DEBRIS_OR_LOOKALIKE", fused_conf
 
@@ -47,11 +46,11 @@ class FusionEngine:
         if persistence_frames < min_frames:
             return False, "INSUFFICIENT_TEMPORAL_PERSISTENCE", fused_conf
 
-        # 4. Motion / High Morphology check
+        # 4. Motion / High Morphology check (Reject static debris unless exceptional larva morphology)
         if motion_score < motion_th and larva_prob < high_morph_th:
             return False, "STATIC_DEBRIS_NO_INDEPENDENT_MOTION", fused_conf
 
-        # All criteria satisfied -> Accepted candidate track
+        # All criteria satisfied -> Accepted positive larva candidate track
         return True, None, fused_conf
 
     @staticmethod
