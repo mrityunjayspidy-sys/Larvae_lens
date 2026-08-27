@@ -40,10 +40,8 @@ class ScanService:
 
             # Common Video signatures
             if len(header) >= 8:
-                # MP4/MOV ftyp box check
                 if b"ftyp" in header[4:12] or b"moov" in header[:16]:
                     return True
-                # Matroska / WebM
                 if header.startswith(b"\x1a\x45\xdf\xa3"):
                     return True
 
@@ -96,11 +94,11 @@ class ScanService:
                 f"Media format '{content_type}' is not supported. Allowed formats: {settings.ALLOWED_VIDEO_MIME_TYPES}"
             )
 
-        # 4. Stream to bounded temporary file
+        # 4. Stream to temporary file
         temp_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "temp"))
         os.makedirs(temp_dir, exist_ok=True)
         scan_id = str(uuid.uuid4())
-        original_filename = video_file.filename or "video.mp4"
+        original_filename = video_file.filename or "media.mp4"
         temp_filename = f"{scan_id}_{original_filename}"
         temp_file_path = os.path.join(temp_dir, temp_filename)
 
@@ -128,25 +126,12 @@ class ScanService:
         is_image = content_type.startswith("image/") or original_filename.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))
         
         if is_image:
-            # Convert single image into a 1-second video clip for unified pipeline analysis
             img = cv2.imread(temp_file_path)
             if img is None:
                 if os.path.exists(temp_file_path):
                     os.remove(temp_file_path)
                 raise ValidationError("Could not decode image file. File may be corrupted.")
-            
-            h, w, _ = img.shape
-            conv_video_path = os.path.join(temp_dir, f"{scan_id}_from_img.mp4")
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            out = cv2.VideoWriter(conv_video_path, fourcc, 10, (w, h))
-            for _ in range(10):  # 10 frames = 1 second
-                out.write(img)
-            out.release()
-            
-            if os.path.exists(temp_file_path):
-                os.remove(temp_file_path)
-            temp_file_path = conv_video_path
-            duration = 1.0
+            duration = 0.0
         else:
             cap = cv2.VideoCapture(temp_file_path)
             if not cap.isOpened():
@@ -171,7 +156,7 @@ class ScanService:
             owner_id=owner_id,
             scan_id=scan_id,
             temp_file_path=temp_file_path,
-            filename="media.mp4" if is_image else original_filename
+            filename=original_filename
         )
 
         # 7. Create Scan Record in DB
@@ -195,7 +180,7 @@ class ScanService:
         created_scan = Repository.create_scan(scan_data)
         Repository.append_scan_event(scan_id, "queued", "SCAN_SUBMITTED", {"duration_seconds": duration, "size_bytes": total_bytes})
 
-        # 8. Dispatch Background Processing Worker via bounded worker queue
+        # 8. Dispatch Background Processing Worker
         try:
             from .worker_queue import worker_queue
             await worker_queue.enqueue(scan_id, temp_file_path)
@@ -208,7 +193,6 @@ class ScanService:
 
         return created_scan
 
-    # Alias for API router compatibility
     process_and_queue_scan = create_and_queue_scan
 
     @classmethod
@@ -218,11 +202,10 @@ class ScanService:
 
     @classmethod
     def execute_inference_worker(cls, scan_id: str, temp_file_path: str):
-        logger.info(f"Starting monotonic background analysis for scan: {scan_id}")
+        logger.info(f"Starting authentic model inference for scan: {scan_id}")
         engine = InferenceEngine()
 
         def progress_callback(*args, **kwargs):
-            # Gracefully handle progress_callback(progress_percent, stage_name) or progress_callback(status, progress_percent, stage_name)
             progress_percent = 50
             stage_name = "detecting"
             status = ScanStatus.DETECTING.value
@@ -256,7 +239,6 @@ class ScanService:
             if "status" in kwargs:
                 status = kwargs["status"]
 
-            # Map stage to appropriate scan status
             if stage_name in ["validating"]:
                 status = ScanStatus.VALIDATING.value
             elif stage_name in ["detecting"]:
@@ -274,10 +256,32 @@ class ScanService:
             Repository.append_scan_event(scan_id, stage_name, "STAGE_PROGRESS", {"percent": progress_percent})
 
         try:
-            result = engine.process_video(
-                video_path=temp_file_path,
-                progress_callback=progress_callback
-            )
+            # Check if source is image or video
+            is_image = False
+            try:
+                scan_rec = Repository.get_scan_by_id(scan_id)
+                if scan_rec:
+                    mime = scan_rec.get("source_mime_type", "")
+                    dur = scan_rec.get("duration_seconds", 0.0)
+                    is_image = mime.startswith("image/") or dur == 0.0
+            except Exception:
+                pass
+
+            if not is_image:
+                if temp_file_path.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
+                    is_image = True
+
+            # Execute real model inference
+            if is_image:
+                result = engine.process_image(
+                    image_path=temp_file_path,
+                    progress_callback=progress_callback
+                )
+            else:
+                result = engine.process_video(
+                    video_path=temp_file_path,
+                    progress_callback=progress_callback
+                )
 
             # Store tracks in database
             tracks = result.get("tracks", []) if isinstance(result, dict) else getattr(result, "tracks", [])
@@ -330,7 +334,7 @@ class ScanService:
             }
             Repository.update_scan(scan_id, final_update)
             Repository.append_scan_event(scan_id, "completed", "SCAN_COMPLETED", {"probable_larvae_count": probable_larvae_count})
-            logger.info(f"Scan {scan_id} analysis finished with status: {final_status}")
+            logger.info(f"Scan {scan_id} analysis finished: {probable_larvae_count} larvae found (Risk: {risk_level})")
 
         except Exception as e:
             logger.error(f"Inference pipeline failed for scan {scan_id}: {e}", exc_info=True)

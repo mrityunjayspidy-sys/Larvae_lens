@@ -15,6 +15,117 @@ class InferenceEngine:
     def __init__(self):
         self.fusion = FusionEngine(model_registry.fusion_thresholds)
 
+    def process_image(
+        self,
+        image_path: str,
+        output_evidence_dir: Optional[str] = None,
+        progress_callback: Optional[Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Executes real image inference with larva_detector_e050_best.pt YOLO model.
+        Accurately classifies image as Larvae Detected (with count & crops) or Normal Water (No Larvae).
+        """
+        if not model_registry.ready:
+            raise RuntimeError("ModelRegistry is not ready. Cannot process inference.")
+
+        if progress_callback:
+            progress_callback(20, "validating")
+
+        frame = cv2.imread(image_path)
+        if frame is None or frame.size == 0:
+            raise ValueError("Could not read image file for inference.")
+
+        h, w = frame.shape[:2]
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        brightness = float(np.mean(gray))
+        blur_var = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+
+        quality = VideoQuality.GOOD
+        quality_reasons = []
+        if brightness < 30.0:
+            quality = VideoQuality.POOR
+            quality_reasons.append("LOW_LIGHT_ENVIRONMENT")
+        elif blur_var < 50.0:
+            quality = VideoQuality.USABLE
+            quality_reasons.append("MODERATE_BLUR")
+
+        if progress_callback:
+            progress_callback(50, "detecting")
+
+        # Run direct YOLO detection with active larva_detector_e050_best.pt
+        det_threshold = model_registry.fusion_thresholds.get("detector_threshold", 0.25)
+        det_results = model_registry.detector_model.predict(
+            frame,
+            conf=det_threshold,
+            imgsz=640,
+            verbose=False
+        )
+
+        if progress_callback:
+            progress_callback(80, "verifying")
+
+        processed_tracks: List[Dict[str, Any]] = []
+        accepted_tracks: List[Dict[str, Any]] = []
+
+        track_idx = 1
+        for res in det_results:
+            boxes = res.boxes
+            for box in boxes:
+                coords = box.xyxy[0].cpu().numpy()
+                conf = float(box.conf[0].cpu().numpy())
+
+                x1, y1, x2, y2 = coords
+                bw = x2 - x1
+                bh = y2 - y1
+                pad_x = bw * 0.15
+                pad_y = bh * 0.15
+                crop_x1 = max(0, int(x1 - pad_x))
+                crop_y1 = max(0, int(y1 - pad_y))
+                crop_x2 = min(w, int(x2 + pad_x))
+                crop_y2 = min(h, int(y2 + pad_y))
+
+                crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                evidence_frame_path = None
+                if output_evidence_dir and crop.size > 0:
+                    os.makedirs(output_evidence_dir, exist_ok=True)
+                    crop_filename = f"track_{track_idx}.jpg"
+                    evidence_frame_path = os.path.join(output_evidence_dir, crop_filename)
+                    cv2.imwrite(evidence_frame_path, crop)
+
+                track_record = {
+                    "track_number": track_idx,
+                    "detector_confidence": round(conf, 4),
+                    "larva_probability": round(conf, 4),
+                    "non_larva_probability": round(1.0 - conf, 4),
+                    "motion_score": 0.0,
+                    "fused_confidence": round(conf, 4),
+                    "persistence_frames": 1,
+                    "accepted": True,
+                    "reject_reason": None,
+                    "trajectory": [{"frame": 0, "timestamp_s": 0.0, "bbox": [float(x1), float(y1), float(x2), float(y2)]}],
+                    "evidence_frame_path": evidence_frame_path
+                }
+                processed_tracks.append(track_record)
+                accepted_tracks.append(track_record)
+                track_idx += 1
+
+        probable_larvae_count = len(accepted_tracks)
+        overall_confidence = self.fusion.calculate_overall_confidence(accepted_tracks) if probable_larvae_count > 0 else 0.0
+        risk_level = self.fusion.map_risk_level(probable_larvae_count)
+
+        return {
+            "status": "completed",
+            "video_quality": quality,
+            "quality_reasons": quality_reasons,
+            "probable_larvae_count": probable_larvae_count,
+            "rejected_tracks": 0,
+            "overall_confidence": overall_confidence,
+            "risk_level": risk_level,
+            "tracks": processed_tracks,
+            "model_versions": model_registry.get_model_versions_dict(),
+            "duration_seconds": 0.0
+        }
+
     def process_video(
         self,
         video_path: str,
@@ -232,7 +343,7 @@ class InferenceEngine:
 
         probable_larvae_count = len(accepted_tracks)
         rejected_count = len(rejected_tracks)
-        overall_confidence = self.fusion.calculate_overall_confidence(accepted_tracks)
+        overall_confidence = self.fusion.calculate_overall_confidence(accepted_tracks) if probable_larvae_count > 0 else 0.0
         risk_level = self.fusion.map_risk_level(probable_larvae_count)
 
         return {
